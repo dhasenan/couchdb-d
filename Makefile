@@ -14,7 +14,7 @@ lib_build_params= -I../out/di ../out/heaploop.a
 
 build: heaploop-couchdb-local
 
-heaploop-couchdb-build: lib/**/*.d
+heaploop-couchdb-build: lib/*.d
 	mkdir -p out
 	(cd lib; $(DC) -Hd../out/di/ -c -of../out/couched.o -op *.d $(lib_build_params) $(DFLAGS))
 	ar -r out/couched.a out/couched.o
@@ -22,7 +22,7 @@ heaploop-couchdb-build: lib/**/*.d
 heaploop-couchdb-local: deps/heaploop heaploop-couchdb-build
 
 examples: heaploop-couchdb-local
-	(cd examples; $(DC) -of../out/albums_example -op *.d -I../out/di ../out/couched.a ../out/heaploop.a $(DFLAGS))
+	(cd examples; $(DC) -of../out/albums_example -op *.d ../lib/*.d -I../out/di ../out/heaploop.a $(DFLAGS))
 	chmod +x out/./albums_example
 	out/./albums_example
 

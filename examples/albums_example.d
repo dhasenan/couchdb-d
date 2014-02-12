@@ -9,13 +9,33 @@ void main() {
         CouchedDatabase db = client.databases.albums;
         db.ensure();
 
-        JSONValue album = parseJSON(q{
-            {
-                "name": "HurryUp, We're Dreaming",
-                "artist_name": "M83"        
+        bool shouldUpdate = true;
+        JSONValue existingAlbum;
+        try {
+            existingAlbum = db.get("hurryup-m83");
+            writeln("Album already exists");
+        } catch(CouchedException cex) {
+            if(cex.error == CouchedError.NotFound) {
+                shouldUpdate = false;
+                writeln("Album doesn't exists");
+            } else {
+                throw cex;
             }
-        });
-        JSONValue response = db.create("hurryup-m83", &album);
-        writeln("create response: ", toJSON(&response));
+        }
+        if(shouldUpdate) {
+            writeln("Updating");
+            JSONValue response = db.update(existingAlbum);
+            writeln("update response: ", toJSON(&response));
+        } else {
+            writeln("creating");
+            JSONValue album = parseJSON(q{
+                {
+                    "name": "HurryUp, We're Dreaming",
+                    "artist_name": "M83"        
+                }
+            });
+            JSONValue response = db.create("hurryup-m83", album);
+            writeln("create response: ", toJSON(&response));
+        }
     };
 }

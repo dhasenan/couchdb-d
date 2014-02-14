@@ -38,13 +38,31 @@ void checkResponse(const ref JSONValue resp, string file = __FILE__, size_t line
     }
 }
 
+void checkJSONType(string source, JSON_TYPE type)(ref const JSONValue value, string file = __FILE__, size_t line = __LINE__) {
+    if(value.type != type) {
+        throw new CouchedException(source ~ " is not of type JSON_TYPE." ~ type.to!string, CouchedError.UnexpectedType, file, line);
+    }
+}
+
+JSONValue getJSONProperty(string source, string propertyName, JSON_TYPE type)(ref const JSONValue value, string file = __FILE__, size_t line = __LINE__) {
+    value.checkJSONType!(source, JSON_TYPE.OBJECT)(file, line);
+    if(propertyName !in value.object) {
+        throw new CouchedException(source ~ " is missing property " ~ propertyName, CouchedError.MissingProperty, file, line);
+    }
+    JSONValue prop = value.object[propertyName];
+    prop.checkJSONType!(propertyName, JSON_TYPE.STRING)(file, line);
+    return prop;
+}
+
 public:
 
 enum CouchedError {
     None,
     Unknown,
     NotFound,
-    InvalidDocument
+    InvalidDocument,
+    UnexpectedType,
+    MissingProperty
 }
 
 class CouchedException : Exception
@@ -111,26 +129,45 @@ class CouchedDatabase {
             _name = name;
         }
     public:
-        JSONValue update(const ref JSONValue value) {
+        JSONValue update(ref JSONValue value) {
             string uuid;
-            if(value.type == JSON_TYPE.OBJECT) {
-                if("_id" in value.object) {
-                    JSONValue idValue = value.object["_id"];
-                    uuid = idValue.str;
-                } else {
-                    throw new CouchedException("document doesn't contain _id property", CouchedError.InvalidDocument);
-                }
+            value.checkJSONType!("Document", JSON_TYPE.OBJECT)();
+            if("_id" in value.object) {
+                JSONValue idValue = value.object["_id"];
+                uuid = idValue.str;
             } else {
-                throw new CouchedException("document is not object", CouchedError.InvalidDocument);
+                throw new CouchedException("document doesn't contain _id property", CouchedError.InvalidDocument);
             }
             return create(uuid, value);
         }
 
-        JSONValue create(string uuid, const ref JSONValue value) {
+        JSONValue create(string uuid, ref JSONValue value) {
            string valueText = (&value).toJSON;
            ubyte[] valueData = cast(ubyte[])valueText;
            auto content = new UbyteContent(valueData);
            auto response = _client._client.put(_documentPath(uuid), content);
+           ubyte[] data;
+           response.read ^ (chunk) {
+               data ~= chunk.buffer;
+           };
+           string res = cast(string)data;
+           JSONValue resp = res.parseJSON;
+           resp.checkResponse();
+           value.object["_rev"] = resp.object["rev"];
+           value.object["_id"] = resp.object["id"];
+           return resp;
+        }
+
+        JSONValue delete_(const ref JSONValue value) {
+           value.checkJSONType!("Document", JSON_TYPE.OBJECT);
+
+           JSONValue uuidObject = value.getJSONProperty!("Document","_id", JSON_TYPE.STRING);
+           string uuid = uuidObject.str;
+
+           JSONValue revIdObject = value.getJSONProperty!("Document","_rev", JSON_TYPE.STRING);
+           string revId = revIdObject.str;
+
+           auto response = _client._client.send("DELETE", _documentPath(uuid) ~ "?rev=" ~ revId);
            ubyte[] data;
            response.read ^ (chunk) {
                data ~= chunk.buffer;

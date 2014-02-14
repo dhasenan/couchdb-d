@@ -24,7 +24,7 @@ heaploop-couchdb-local: deps/heaploop heaploop-couchdb-build
 examples: heaploop-couchdb-local
 	(cd examples; $(DC) -of../out/albums_example -op *.d ../lib/*.d -I../out/di ../out/heaploop.a $(DFLAGS))
 	chmod +x out/./albums_example
-	out/./albums_example
+	out/./albums_example $(ARGS)
 
 .PHONY: clean
 

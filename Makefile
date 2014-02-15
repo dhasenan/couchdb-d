@@ -10,23 +10,25 @@ endif
 ifeq (${OS_NAME},Darwin)
 	DFLAGS+=-L-framework -LCoreServices 
 endif
-lib_build_params= -I../out/di ../out/heaploop.a
+ifeq (${lib_build_params}, )
+	lib_build_params= -I../out/di ../out/heaploop.a
+endif
 
-build: heaploop-couchdb-local
+build: local
 
-heaploop-couchdb-build: lib/*.d
+compile: lib/*.d
 	mkdir -p out
 	(cd lib; $(DC) -Hd../out/di/ -c -of../out/couched.o -op *.d $(lib_build_params) $(DFLAGS))
 	ar -r out/couched.a out/couched.o
 
-heaploop-couchdb-local: deps/heaploop heaploop-couchdb-build
+local: deps/heaploop compile
 
-examples: heaploop-couchdb-local
+examples: local
 	(cd examples; $(DC) -of../out/albums_example -op *.d ../lib/*.d -I../out/di ../out/heaploop.a $(DFLAGS))
 	chmod +x out/./albums_example
 	out/./albums_example $(ARGS)
 
-.PHONY: clean
+.PHONY: clean copy-external
 
 deps/heaploop:
 	@echo "Compiling deps/heaploop"

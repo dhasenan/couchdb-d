@@ -5,7 +5,7 @@ import std.stdio : writeln;
 import std.algorithm;
 
 void main(string[] args) {
-    loop ^^ {
+    loop ^^= {
         auto client = new CouchedClient("http://127.0.0.1:5984");
         CouchedDatabase db = client.databases.albums;
         db.ensure();

@@ -147,7 +147,7 @@ class CouchedDatabase {
            auto content = new UbyteContent(valueData);
            auto response = _client._client.put(_documentPath(uuid), content);
            ubyte[] data;
-           response.read ^ (chunk) {
+           response.read ^= (chunk) {
                data ~= chunk.buffer;
            };
            string res = cast(string)data;
@@ -169,7 +169,7 @@ class CouchedDatabase {
 
            auto response = _client._client.send("DELETE", _documentPath(uuid) ~ "?rev=" ~ revId);
            ubyte[] data;
-           response.read ^ (chunk) {
+           response.read ^= (chunk) {
                data ~= chunk.buffer;
            };
            string res = cast(string)data;
@@ -181,7 +181,7 @@ class CouchedDatabase {
         JSONValue get(string uuid) {
             auto response = _client._client.get(_documentPath(uuid));
             ubyte[] data;
-            response.read ^ (chunk) {
+            response.read ^= (chunk) {
                 data ~= chunk.buffer;
             };
             string res = cast(string)data;

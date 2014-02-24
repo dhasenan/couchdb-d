@@ -1,0 +1,13 @@
+{
+    "name": "couched",
+    "description": "CoucheDB client",
+    "license": "MIT",
+    "targetType": "library",
+    "copyright": "Copyright © 2014, heapsource.com",
+    "authors": ["heapsource"],
+    "sourcePaths": ["lib"],
+    "importPaths": ["lib"],
+    "dependencies": {
+        "heaploop": "~master"
+    }
+}

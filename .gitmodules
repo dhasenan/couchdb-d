@@ -1,3 +1,0 @@
-[submodule "deps/heaploop"]
-	path = deps/heaploop
-	url = https://github.com/heapsource/heaploop.git

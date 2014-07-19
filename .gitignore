@@ -1,2 +1,4 @@
 /out
 /deps/heaploop
+libcouched.a
+.dub

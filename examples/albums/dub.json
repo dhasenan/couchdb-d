@@ -1,0 +1,12 @@
+{
+	"name": "albums",
+	"description": "A minimal D application.",
+	"copyright": "Copyright © 2014, thepumpkin",
+	"authors": ["thepumpkin"],
+	"dependencies": {
+        "couched": {
+            "path": "../../",
+            "version": "~master"
+        }
+	}
+}

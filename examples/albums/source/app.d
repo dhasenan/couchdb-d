@@ -1,8 +1,8 @@
 import heaploop.looping;
 import couched;
-import std.json;
 import std.stdio : writeln;
 import std.algorithm;
+import medea;
 
 void main(string[] args) {
     loop ^^= {
@@ -11,7 +11,7 @@ void main(string[] args) {
         db.ensure();
 
         bool shouldUpdate = true;
-        JSONValue existingAlbum;
+        ObjectValue existingAlbum;
         try {
             existingAlbum = db.get("hurryup-m83");
             writeln("Album already exists");
@@ -25,18 +25,18 @@ void main(string[] args) {
         }
         if(shouldUpdate) {
             writeln("Updating");
-            JSONValue response = db.update(existingAlbum);
-            writeln("update response: ", toJSON(&response));
+            ObjectValue response = db.update(existingAlbum);
+            writeln("update response: ", response.toJSONString());
         } else {
             writeln("creating");
-            JSONValue album = parseJSON(q{
+            ObjectValue album = cast(ObjectValue)parse(q{
                 {
                     "name": "HurryUp, We're Dreaming",
                     "artist_name": "M83"        
                 }
             });
-            JSONValue response = db.create("hurryup-m83", album);
-            writeln("create response: ", toJSON(&response));
+            ObjectValue response = db.create("hurryup-m83", album);
+            writeln("create response: ", response.toJSONString());
         }
         writeln("Optional Behavior");
         if(args.canFind("deleting")) {

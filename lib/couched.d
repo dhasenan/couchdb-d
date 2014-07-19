@@ -4,25 +4,25 @@ import http.parser.core;
 import std.conv : to;
 import std.stdio : writeln;
 import std.string : format;
-import std.json;
+import std.exception : enforceEx;
+import medea;
 
 private:
 
-void checkResponse(const ref JSONValue resp, string file = __FILE__, size_t line = __LINE__) {
-    if(resp.type == JSON_TYPE.OBJECT) {
-        JSONValue errorValue;
-        if("error" in resp.object) {
-            errorValue = resp.object["error"];
+void checkResponse(ObjectValue resp, string file = __FILE__, size_t line = __LINE__) {
+        StringValue errorValue;
+        if("error" in resp) {
+            errorValue = cast(StringValue)resp["error"];
         }
-        if(errorValue != JSONValue.init && errorValue.type == JSON_TYPE.STRING) {
-            string errorString = errorValue.str;
+        if(errorValue) {
+            string errorString = errorValue.text;
             string reasonString;
-            JSONValue reasonValue;
-            if("reason" in resp.object) { 
-                reasonValue = resp.object["reason"];
+            StringValue reasonValue;
+            if("reason" in resp) { 
+                reasonValue = cast(StringValue)resp["reason"];
             }
-            if(reasonValue != JSONValue.init && reasonValue.type == JSON_TYPE.STRING) {
-                reasonString = reasonValue.str;
+            if(reasonValue) {
+                reasonString = reasonValue.text;
             }
             CouchedError error;
             switch(errorString) {
@@ -35,9 +35,8 @@ void checkResponse(const ref JSONValue resp, string file = __FILE__, size_t line
             }
             throw new CouchedException("%s: %s".format(errorString, reasonString), error, file, line);
         }
-    }
 }
-
+/*
 void checkJSONType(string source, JSON_TYPE type)(ref const JSONValue value, string file = __FILE__, size_t line = __LINE__) {
     if(value.type != type) {
         throw new CouchedException(source ~ " is not of type JSON_TYPE." ~ type.to!string, CouchedError.UnexpectedType, file, line);
@@ -53,7 +52,7 @@ JSONValue getJSONProperty(string source, string propertyName, JSON_TYPE type)(re
     prop.checkJSONType!(propertyName, JSON_TYPE.STRING)(file, line);
     return prop;
 }
-
+*/
 public:
 
 enum CouchedError {
@@ -129,20 +128,22 @@ class CouchedDatabase {
             _name = name;
         }
     public:
-        JSONValue update(ref JSONValue value) {
+        ObjectValue update(ObjectValue value) {
+            if(!value) {
+                throw new CouchedException("Can't update null document", CouchedError.InvalidDocument);
+            }
             string uuid;
-            value.checkJSONType!("Document", JSON_TYPE.OBJECT)();
-            if("_id" in value.object) {
-                JSONValue idValue = value.object["_id"];
-                uuid = idValue.str;
+            if("_id" in value) {
+                StringValue idValue = cast(StringValue)value["_id"];
+                uuid = idValue.text;
             } else {
                 throw new CouchedException("document doesn't contain _id property", CouchedError.InvalidDocument);
             }
             return create(uuid, value);
         }
 
-        JSONValue create(string uuid, ref JSONValue value) {
-           string valueText = (&value).toJSON;
+        ObjectValue create(string uuid, ObjectValue value) {
+           string valueText = value.toJSONString;
            ubyte[] valueData = cast(ubyte[])valueText;
            auto content = new UbyteContent(valueData);
            auto response = _client._client.put(_documentPath(uuid), content);
@@ -151,21 +152,22 @@ class CouchedDatabase {
                data ~= chunk.buffer;
            };
            string res = cast(string)data;
-           JSONValue resp = res.parseJSON;
+           ObjectValue resp = cast(ObjectValue)res.parse;
            resp.checkResponse();
-           value.object["_rev"] = resp.object["rev"];
-           value.object["_id"] = resp.object["id"];
+           value["_rev"] = resp["rev"];
+           value["_id"] = resp["id"];
            return resp;
         }
 
-        JSONValue delete_(const ref JSONValue value) {
-           value.checkJSONType!("Document", JSON_TYPE.OBJECT);
+        ObjectValue delete_(ObjectValue value) {
+           if(!!value) {
+               throw new CouchedException("Can't update null document", CouchedError.InvalidDocument);
+           }
+           StringValue uuidObject = cast(StringValue)value["_id"];
+           string uuid = uuidObject.text;
 
-           JSONValue uuidObject = value.getJSONProperty!("Document","_id", JSON_TYPE.STRING);
-           string uuid = uuidObject.str;
-
-           JSONValue revIdObject = value.getJSONProperty!("Document","_rev", JSON_TYPE.STRING);
-           string revId = revIdObject.str;
+           StringValue revIdObject = cast(StringValue)value["_rev"];
+           string revId = revIdObject.text;
 
            auto response = _client._client.send("DELETE", _documentPath(uuid) ~ "?rev=" ~ revId);
            ubyte[] data;
@@ -173,19 +175,19 @@ class CouchedDatabase {
                data ~= chunk.buffer;
            };
            string res = cast(string)data;
-           JSONValue resp = res.parseJSON;
+           ObjectValue resp = cast(ObjectValue)res.parse;
            resp.checkResponse();
            return resp;
         }
 
-        JSONValue get(string uuid) {
+        ObjectValue get(string uuid) {
             auto response = _client._client.get(_documentPath(uuid));
             ubyte[] data;
             response.read ^= (chunk) {
                 data ~= chunk.buffer;
             };
             string res = cast(string)data;
-            JSONValue resp = res.parseJSON;
+            ObjectValue resp = cast(ObjectValue)res.parse;
             resp.checkResponse();
             return resp;
         }

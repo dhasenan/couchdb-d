@@ -8,13 +8,5 @@
     "sourcePaths": ["lib"],
     "importPaths": ["lib"],
     "dependencies": {
-        "medea": {
-            "path": "../medea",
-            "version": "~master"
-        },
-        "heaploop": {
-            "path": "../heaploop",
-            "version": "~master"
-        }
     }
 }

@@ -1,228 +1,227 @@
 module couched;
-import heaploop.networking.http;
-import http.parser.core;
+
 import std.conv : to;
-import std.stdio : writeln;
+import std.json;
+import curl = std.net.curl;
 import std.string : format;
-import std.exception : enforceEx;
-import medea;
+import std.uri;
+import std.uuid;
 
-private:
 
-void checkResponse(ObjectValue resp, string file = __FILE__, size_t line = __LINE__) {
-        StringValue errorValue;
-        if("error" in resp) {
-            errorValue = cast(StringValue)resp["error"];
-        }
-        if(errorValue) {
-            string errorString = errorValue.text;
-            string reasonString;
-            StringValue reasonValue;
-            if("reason" in resp) { 
-                reasonValue = cast(StringValue)resp["reason"];
-            }
-            if(reasonValue) {
-                reasonString = reasonValue.text;
-            }
-            CouchedError error;
-            switch(errorString) {
-                case "not_found":
-                    error = CouchedError.NotFound;
-                    break;
-                default:
-                    error = CouchedError.Unknown;
-                    break;
-            }
-            throw new CouchedException("%s: %s".format(errorString, reasonString), error, file, line);
-        }
-}
-/*
-void checkJSONType(string source, JSON_TYPE type)(ref const JSONValue value, string file = __FILE__, size_t line = __LINE__) {
-    if(value.type != type) {
-        throw new CouchedException(source ~ " is not of type JSON_TYPE." ~ type.to!string, CouchedError.UnexpectedType, file, line);
-    }
+enum CouchError {
+	None,
+	Unknown,
+	NotFound,
+	InvalidDocument,
+	UnexpectedType,
+	MissingProperty
 }
 
-JSONValue getJSONProperty(string source, string propertyName, JSON_TYPE type)(ref const JSONValue value, string file = __FILE__, size_t line = __LINE__) {
-    value.checkJSONType!(source, JSON_TYPE.OBJECT)(file, line);
-    if(propertyName !in value.object) {
-        throw new CouchedException(source ~ " is missing property " ~ propertyName, CouchedError.MissingProperty, file, line);
-    }
-    JSONValue prop = value.object[propertyName];
-    prop.checkJSONType!(propertyName, JSON_TYPE.STRING)(file, line);
-    return prop;
-}
-*/
-public:
-
-enum CouchedError {
-    None,
-    Unknown,
-    NotFound,
-    InvalidDocument,
-    UnexpectedType,
-    MissingProperty
+struct DocumentResult {
+	string id;
+	string revision;
+	bool ok;
+	
+	this(JSONValue value) {
+		id = value["id"].str;
+		revision = value["rev"].str;
+		ok = value["ok"].type == JSON_TYPE.TRUE;
+	}
 }
 
-class CouchedException : Exception
+class CouchException : Exception
 {
-    private:
-        CouchedError _error;
+	private:
+		CouchError _error;
 
-    public:
-        this(string msg, CouchedError error = CouchedError.Unknown, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-            super(msg, file, line, next);
-            _error = error;
-        }
+	public:
+		this(string msg, CouchError error = CouchError.Unknown, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+			super(msg, file, line, next);
+			_error = error;
+		}
 
-        @property CouchedError error() pure nothrow {
-            return _error;
-        }
+		@property CouchError error() pure nothrow {
+			return _error;
+		}
 
-        override string toString() {
-            return std.string.format("%s: %s", this.error.to!string, this.msg);
-        }
+		override string toString() {
+			return std.string.format("%s: %s", this.error.to!string, this.msg);
+		}
 
 }
 
-class CouchedDatabaseManager {
-    private:
-        CouchedClient _client;
+/**
+	* A CouchDB database.
+	*
+	* This represents a single named database within a CouchDB instance.
+	*/
+class CouchDatabase {
+	private string _name;
+	private CouchClient _client;
 
-    package:
-        this(CouchedClient client) {
-            _client = client;
-        }
+	private string _documentPath(string uuid) {
+		return _client.uri ~ "/" ~ _name ~ "/" ~ uuid;
+	}
 
-    public:
-        void ensure(string name) {
-            _client._client.put("/" ~ name);
-        }
+	package this(CouchClient client, string name) {
+		_client = client;
+		_name = name;
+	}
 
-        CouchedDatabase opIndex(string name)
-            in {
-                assert(name, "name is required");
-            }
-            body {
-                return new CouchedDatabase(_client, name);
-            }
+	/**
+		* Insert the given JSON document into the database.
+		*
+		* Params:
+		*   uuid  = the ID of the object to insert.
+		*   value = the value to insert into the database.
+		* Returns:
+		*   The input JSON value with added _rev and _id fields, representing the document's new
+		*   revision number and ID respectively.
+		*/
+	DocumentResult create(UUID uuid, ref JSONValue value) {
+		return create(uuid.toString, value);
+	}
 
-            CouchedDatabase opDispatch(string name)()
-            {
-               return this[name]; 
-            }
+	/**
+		* Insert the given JSON document into the database.
+		*
+		* Params:
+		*   uuid  = the ID of the object to insert.
+		*   value = the value to insert into the database.
+		* Returns:
+		*/
+	DocumentResult create(string uuid, ref JSONValue value) {
+		auto response = cast(string) curl.put(_documentPath(uuid), value.toString);
+		auto resp = parseJSON(response);
+		value["_rev"] = resp["rev"];
+		value["_id"] = resp["id"];
+		return DocumentResult(resp);
+	}
+
+	/**
+		* Insert the given JSON document into the database, creating a new ID for it.
+		*
+		* Params:
+		*   value = the value to insert into the database.
+		* Returns:
+		*   The input JSON value with added _rev and _id fields, representing the document's new
+		*   revision number and ID respectively.
+		*/
+	DocumentResult create(ref JSONValue value) {
+		return create(randomUUID, value);
+	}
+
+	/**
+		* Update the given JSON document in the database.
+		*
+		* Params:
+		*   value = the value to insert into the database. It must have a valid _id field.
+		* Returns:
+		*   The input JSON value with added _rev and _id fields, representing the document's new
+		*   revision number and ID respectively.
+		*/
+	DocumentResult update(JSONValue value) {
+		return create(value["_id"].str, value);
+	}
+
+	/**
+		* Remove the given document from the database.
+		*
+		* This marks the document as deleted but does not expunge it from the database. It instead adds
+		* a revision that marks the document as deleted. With this method, it also removes all fields
+		* besides the document ID and revision and deleted flag.
+		*
+		* You can also delete a document (without removing its other fields) by adding an entry
+		* "_deleted": true to the document root.
+		*
+		* If you need the document entirely expunged from the database, use the `purge` option.
+		*
+		* Params:
+		*   value = The document to delete.
+		* Returns:
+		*   A json document of the form
+		*   {"id": "document id", "rev": "document revision", "ok": true|false}
+		*   indicating the success or failure.
+		*/
+	DocumentResult remove(JSONValue value) {
+		auto uuid = value["_id"].str;
+		auto revision = value["_rev"].str;
+		auto http = curl.HTTP(_documentPath(uuid) ~ "?rev=" ~ revision);
+		http.method = curl.HTTP.Method.del;
+		ubyte[] data;
+		http.onReceive = (chunk) {
+			data ~= chunk;
+			return chunk.length;
+		};
+		http.perform;
+		return DocumentResult(parseJSON(cast(string)data));
+	}
+
+	/**
+		* Get the document stored in the database with the given ID.
+		*/
+	JSONValue get(string uuid) {
+		return parseJSON(curl.get(_documentPath(uuid)));
+	}
+
+	/**
+		* Create this database.
+		*/
+	JSONValue createDatabase() {
+		return parseJSON(curl.put(_client.uri ~ "/" ~ _name, []));
+	}
+
+	/**
+		* Delete this database.
+		*/
+	JSONValue deleteDatabase() {
+		auto http = curl.HTTP(_client.uri ~ "/" ~ _name);
+		http.method = curl.HTTP.Method.del;
+		ubyte[] data;
+		http.onReceive = (chunk) {
+			data ~= chunk;
+			return chunk.length;
+		};
+		http.perform;
+		return parseJSON(cast(string)data);
+	}
 }
 
-class CouchedDatabase {
-    private:
-        string _name;
-        CouchedClient _client;
+class CouchClient {
+	private string _uri;
 
-        string _documentPath(string uuid) {
-            return "/" ~ _name ~ "/" ~ uuid;
-        }
+	this(string uri) {
+		_uri = uri;
+	}
 
-    package:
-        this(CouchedClient client, string name) {
-            _client = client;
-            _name = name;
-        }
-    public:
-        ObjectValue update(ObjectValue value) {
-            if(!value) {
-                throw new CouchedException("Can't update null document", CouchedError.InvalidDocument);
-            }
-            string uuid;
-            if("_id" in value) {
-                StringValue idValue = cast(StringValue)value["_id"];
-                uuid = idValue.text;
-            } else {
-                throw new CouchedException("document doesn't contain _id property", CouchedError.InvalidDocument);
-            }
-            return create(uuid, value);
-        }
+	@property string uri() nothrow pure {
+		return _uri;
+	}
 
-        ObjectValue create(string uuid, ObjectValue value) {
-           string valueText = value.toJSONString;
-           ubyte[] valueData = cast(ubyte[])valueText;
-           auto content = new UbyteContent(valueData);
-           auto response = _client._client.put(_documentPath(uuid), content);
-           ubyte[] data;
-           response.read ^= (chunk) {
-               data ~= chunk.buffer;
-           };
-           string res = cast(string)data;
-           ObjectValue resp = cast(ObjectValue)res.parse;
-           resp.checkResponse();
-           value["_rev"] = resp["rev"];
-           value["_id"] = resp["id"];
-           return resp;
-        }
+	void ensure(string name) {
+		curl.put(_uri ~ "/" ~ name, []);
+	}
 
-        ObjectValue delete_(ObjectValue value) {
-           if(!!value) {
-               throw new CouchedException("Can't update null document", CouchedError.InvalidDocument);
-           }
-           StringValue uuidObject = cast(StringValue)value["_id"];
-           string uuid = uuidObject.text;
+	string[] databases() {
+		auto s = curl.get(_uri ~ "/_all_dbs");
+		auto j = parseJSON(s).array;
+		auto dbNames = new string[j.length];
+		foreach (i, name; j) {
+			dbNames[i] = name.str;
+		}
+		return dbNames;
+	}
 
-           StringValue revIdObject = cast(StringValue)value["_rev"];
-           string revId = revIdObject.text;
-
-           auto response = _client._client.send("DELETE", _documentPath(uuid) ~ "?rev=" ~ revId);
-           ubyte[] data;
-           response.read ^= (chunk) {
-               data ~= chunk.buffer;
-           };
-           string res = cast(string)data;
-           ObjectValue resp = cast(ObjectValue)res.parse;
-           resp.checkResponse();
-           return resp;
-        }
-
-        ObjectValue get(string uuid) {
-            auto response = _client._client.get(_documentPath(uuid));
-            ubyte[] data;
-            response.read ^= (chunk) {
-                data ~= chunk.buffer;
-            };
-            string res = cast(string)data;
-            ObjectValue resp = cast(ObjectValue)res.parse;
-            resp.checkResponse();
-            return resp;
-        }
-
-        void ensure() {
-            _client.databases.ensure(_name);
-        }
-}
-
-class CouchedClient {
-    private:
-        Uri _uri;
-        CouchedDatabaseManager _databases;
-
-    package:
-        HttpClient _client;
-
-    public:
-        this(string uri) {
-            this(Uri(uri));
-        }
-        this(Uri uri) {
-            _uri = uri;
-            _client = new HttpClient(_uri);
-            _databases = new CouchedDatabaseManager(this);
-        }
-
-        @property {
-            Uri uri() nothrow pure {
-                return _uri;
-            }
-
-            CouchedDatabaseManager databases() nothrow pure {
-                return _databases;
-            }
-
-        }
+	/**
+		* Get the named database.
+		*
+		* This doesn't check for the existence of the database. Good luck!
+		*/
+	CouchDatabase opIndex(string name)
+	in {
+		assert(name, "name is required");
+	}
+	body {
+		return new CouchDatabase(this, name);
+	}
 }

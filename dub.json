@@ -1,12 +1,13 @@
 {
-    "name": "couched",
+    "name": "couch",
     "description": "CouchDB client",
     "license": "MIT",
     "targetType": "library",
-    "copyright": "Copyright © 2014, heapsource.com",
-    "authors": ["heapsource"],
+    "copyright": "Copyright © 2015 Chris Wright",
+    "authors": ["Chris Wright"],
     "sourcePaths": ["lib"],
     "importPaths": ["lib"],
     "dependencies": {
+			"urld": "~>0.3.0"
     }
 }

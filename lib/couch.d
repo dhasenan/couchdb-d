@@ -9,13 +9,45 @@ import std.json;
 import std.string : format;
 import std.uuid;
 
+interface Transport {
+	string get(URL url);
+	string put(URL url, string contents);
+	string delete_(URL url, string contents);
+}
 
-struct http {
+// A simple wrapper around curl. I want to switch this into a transport instead, one that you can
+// swap out implementations for.
+class CurlTransport : Transport {
 	import std.array;
-	import std.stdio;
-	static string get(URL url) {
+
+	string get(URL url) {
+		return perform(url, "", curl.HTTP.Method.get);
+	}
+
+	string put(URL url, string contents) {
+		return perform(url, "", curl.HTTP.Method.get);
+	}
+
+	string delete_(URL url, string contents) {
+		return perform(url, "", curl.HTTP.Method.get);
+	}
+
+	private string perform(URL url, string contents, curl.HTTP.Method method) {
 		auto c = curl.HTTP(url.toString);
 		Appender!string output;
+		size_t sent = 0;
+		c.onSend = (buf) {
+			if (contents.length <= sent) {
+				return 0;
+			}
+			auto len = contents.length - sent;
+			if (len > buf.length) {
+				len = buf.length;
+			}
+			buf[] = cast(void[])contents[sent..sent + len];
+			sent += len;
+			return len;
+		};
 		c.onReceive = (x) {
 			output ~= cast(char[])x;
 			return x.length;
@@ -76,7 +108,7 @@ class CouchException : Exception
 		}
 
 		override string toString() {
-			return std.string.format("%s: %s", this.error.to!string, this.msg);
+			return format("%s: %s", this.error.to!string, this.msg);
 		}
 
 }
@@ -106,36 +138,36 @@ enum Order {
 
 
 /**
-	* A view is an index. It's defined within the context of a design document.
-	*
-	* Views are defined by the view function, which maps a document to a value and a weight.
-	* For many purposes, you can ignore the weight element and simply set it to a constant, such as 1.
-	*
-	* Once you have defined a view, you can query for documents according to the values your function
-	* emitted for them.
-	*
-	* Example view function:
-	* ---
-	* // view 'ingredients' in design doc 'recipes'
-	* function (doc) {
-	*   if (doc.type == 'recipe') {
-	*     doc.ingredients.forEach(function(ingredient) {
-	*       emit(ingredient.name, 1);
-	*     })
-	*   }
-	* }
-	* ---
-	*
-	* Then we can use this to find all recipes using hartshorn:
-	* ---
-	* auto view = connection.db("recipes").designDoc("recipes").view("ingredients");
-	* foreach (recipe; view.query({key: "hartshorn"})) {
-	*   writeln(recipe["name"].str);
-	* }
-	* ---
-	*
-	* And that will show us a selection of cookies and pancakes from Scandinavia.
-	*/
+  * A view is an index. It's defined within the context of a design document.
+  *
+  * Views are defined by the view function, which maps a document to a value and a weight.
+  * For many purposes, you can ignore the weight element and simply set it to a constant, such as 1.
+  *
+  * Once you have defined a view, you can query for documents according to the values your function
+  * emitted for them.
+  *
+  * Example view function:
+  * ---
+  * // view 'ingredients' in design doc 'recipes'
+  * function (doc) {
+  *   if (doc.type == 'recipe') {
+  *     doc.ingredients.forEach(function(ingredient) {
+  *       emit(ingredient.name, 1);
+  *     })
+  *   }
+  * }
+  * ---
+  *
+  * Then we can use this to find all recipes using hartshorn:
+  * ---
+  * auto view = connection.db("recipes").designDoc("recipes").view("ingredients");
+  * foreach (recipe; view.query({key: "hartshorn"})) {
+  *   writeln(recipe["name"].str);
+  * }
+  * ---
+  *
+  * And that will show us a selection of cookies and pancakes from Scandinavia.
+  */
 class View {
 	private DesignDoc _doc;
 	private string _name;
@@ -151,37 +183,41 @@ class View {
 	}
 
 	/**
-		* List items in this view using the named, predefined list function.
-		*
-		* List functions are arbitrary transformations on a document that yield strings.
-		*
-		* Params:
-		*   listName = The name of the list function to use. It must be already saved in this design
-		*              document.
-		*   options  = Query options; see the QueryOptions struct documentation for details.
-		* Returns:
-		*   A CouchImplicitlyPaginatedRange whose values are string JSONValues.
-		*/
+	  * List items in this view using the named, predefined list function.
+	  *
+	  * List functions are arbitrary transformations on a document that yield strings.
+	  *
+	  * Params:
+	  *   listName = The name of the list function to use. It must be already saved in this design
+	  *              document.
+	  *   options  = Query options; see the QueryOptions struct documentation for details.
+	  * Returns:
+	  *   A CouchImplicitlyPaginatedRange whose values are string JSONValues.
+	  */
 	CouchImplicitlyPaginatedRange list(string listName, QueryOptions options) {
 		auto url = _doc.url;
 		url.path ~= format("/_list/%s/%s", listName, _name);
 		options.addQueryParameters(url);
-		return CouchImplicitlyPaginatedRange(url, options.startKey);
+		auto transport = _doc.db.client.transport;
+		assert(transport !is null);
+		return CouchImplicitlyPaginatedRange(url, transport, options.startKey);
 	}
 
 	/**
-		* Query results from this view.
-		*
-		* This yields documents included in this view as JSONValues.
-		*
-		* Params:
-		*   options = Query options; see the QueryOptions struct documentation for details.
-		*/
-	CouchImplicitlyPaginatedRange query(QueryOptions options) {
+	  * Query results from this view.
+	  *
+	  * This yields documents included in this view as JSONValues.
+	  *
+	  * Params:
+	  *   options = Query options; see the QueryOptions struct documentation for details.
+	  */
+	CouchImplicitlyPaginatedRange query(QueryOptions options = QueryOptions.init) {
 		auto url = _doc.url;
 		url.path ~= format("/_view/%s", _name);
 		options.addQueryParameters(url);
-		return CouchImplicitlyPaginatedRange(url, options.startKey);
+		auto transport = _doc.db.client.transport;
+		assert(transport !is null);
+		return CouchImplicitlyPaginatedRange(url, transport, options.startKey);
 	}
 
 	JSONValue toJSON() {
@@ -197,11 +233,11 @@ class View {
 }
 
 /**
-	* Options for executing a query.
-	*
-	* This controls what subset of a database or view you retrieve, the order of traversal, and so
-	* forth.
-	*/
+  * Options for executing a query.
+  *
+  * This controls what subset of a database or view you retrieve, the order of traversal, and so
+  * forth.
+  */
 struct QueryOptions {
 	/// The sole key to get results for. Assumes startKey is null.
 	string key = null;
@@ -213,14 +249,22 @@ struct QueryOptions {
 	Order order = Order.Ascending;
 
 	/** The maximum number of results to fetch, or ulong.max for unlimited.
-		* If you have more than 2**64-1 documents that you wish to scan, you have other problems.
-		*/
+	  * If you have more than 2**64-1 documents that you wish to scan, you have other problems.
+	  */
 	ulong limit = ulong.max;
 
 	/** The number of results to retrieve per page.
-		* Pagination is hidden; this is a performance option.
-		*/
+	  * Pagination is hidden; this is a performance option.
+	  */
 	ulong resultsPerPage = 100;
+
+	/** Whether to include full documents in contexts that would not normally include them.
+	  *
+	  * When querying a view, for instance, the default is to return only the final results of the
+	  * view. For a typical map-only view, for instance, this will be tuples consisting of the keys
+	  * and values you emitted and a special field "id", indicating the ID of the relevant document.
+	  */
+	bool includeDocuments;
 
 	package void addQueryParameters(ref URL url) {
 		if (key != "" && startKey != "") {
@@ -241,29 +285,42 @@ struct QueryOptions {
 		if (order != Order.Ascending) {
 			url.query["descending"] = "true";
 		}
+		if (includeDocuments) {
+			url.query["include_docs"] = "true";
+		}
 	}
 }
 
 /**
-	* A range over database values. It is paginated but does not expose pagination to end users.
-	*
-	* Because it is possible to modify the database while iterating, it is possible that `.empty` will
-	* return false but `.popFront` will fail to retrieve any results (and throw a RangeError).
-	*/
+  * A range over database values. It is paginated but does not expose pagination to end users.
+  *
+  * Because it is possible to modify the database while iterating, it is possible that `.empty` will
+  * return false but `.popFront` will fail to retrieve any results (and throw a RangeError).
+  */
 struct CouchImplicitlyPaginatedRange {
 	private {
 		URL url;
+		Transport transport;
 		JSONValue[] currentPage;
-		long totalResults;
-		string nextResultPageStart;
+		ulong totalResults;
+		string nextResultKey;
+		string nextResultDocID;
 		int resultInCurrentPage;
 		bool inLastPage = false;
+		ulong resultsReturned;
+		ulong maxResults;
 	}
 
-	package this(URL base, string startKey = null) {
+	package this(URL base, Transport transport, string startKey = null, ulong maxResults = ulong.max)
+	in {
+		assert(transport !is null);
+	}
+	body {
 		url = base;
-		nextResultPageStart = startKey;
+		this.transport = transport;
+		nextResultKey = startKey;
 		loadNextPage;
+		this.maxResults = maxResults > 0 ? maxResults : ulong.max;
 	}
 
 	///
@@ -285,6 +342,7 @@ struct CouchImplicitlyPaginatedRange {
 		if (!inLastPage && resultInCurrentPage >= currentPage.length - 1) {
 			loadNextPage();
 		}
+		resultsReturned++;
 		auto value = currentPage[resultInCurrentPage];
 		resultInCurrentPage++;
 		return value;
@@ -292,53 +350,76 @@ struct CouchImplicitlyPaginatedRange {
 
 	///
 	bool empty() {
-		return inLastPage && resultInCurrentPage >= currentPage.length;
+		return inLastPage && (resultInCurrentPage >= currentPage.length || resultsReturned >= maxResults);
+	}
+
+	/** The total number of results in this query.
+	  *
+	  * If documents relevant to this query are modified during iteration, this value might change.
+	  * For instance, if this query is searching for recipes that use hartshorn and someone adds a new
+	  * one after you load the first page of results, when you load the second page, you will see
+	  * numResults updated to reflect the new document.
+	  *
+	  * This may be larger than the limit you provided. In that case, this range will only be over the
+	  * amount you specified, but you could provide a larger limit in order to fetch more.
+	  */
+	@property long numResults() {
+		return totalResults;
 	}
 
 	private void loadNextPage() {
 		resultInCurrentPage = 0;
-		bool inFirstPage = nextResultPageStart.length == 0;
-		if (!inFirstPage) {
-			url.query["startkey"] = nextResultPageStart;
+		if (nextResultKey.length > 0) {
+			url.query["startkey"] = nextResultKey;
 		}
-		auto docText = http.get(url);
+		if (nextResultDocID.length > 0) {
+			url.query["startkey_docid"] = nextResultDocID;
+		}
+		auto docText = transport.get(url);
 		auto doc = docText.parseJSON;
 		// We update this every time because it might have changed.
 		totalResults = doc["total_rows"].integer;
 		currentPage = doc["rows"].array;
 		inLastPage = doc["offset"].integer + currentPage.length >= totalResults;
-		nextResultPageStart = currentPage.length == 0 ? null : currentPage[$-1]["id"].str;
+		if (currentPage.length == 0) {
+			nextResultDocID = null;
+			nextResultKey = null;
+		} else {
+			auto last = currentPage[$-1];
+			nextResultDocID = last["id"].str;
+			nextResultKey = last["key"].str;
+		}
 	}
 }
 
 
 /**
-	* A DesignDoc is a collection of indices, stored queries, and materialized views.
-	*
-	* In a normal relational database, you can issue arbitrary queries, and the database will execute
-	* them immediately. It will use an index if it can and will otherwise scan your entire database.
-	* This can, naturally, be rather slow.
-	*
-	* In CouchDB, in order to prevent slow queries from happening, you are not allowed to execute
-	* queries directly. Instead, you must create a design document containing that query. CouchDB will
-	* create and maintain an index for it.
-	*
-	* You can do pretty much anything you want inside these (much like SQL, but with some of the
-	* antipatterns further enshrined). While people joke about websites run directly from SQL
-	* databases and stored procedures, that is much easier to achieve using CouchDB design documents.
-	*/
+  * A DesignDoc is a collection of indices, stored queries, and materialized views.
+  *
+  * In a normal relational database, you can issue arbitrary queries, and the database will execute
+  * them immediately. It will use an index if it can and will otherwise scan your entire database.
+  * This can, naturally, be rather slow.
+  *
+  * In CouchDB, in order to prevent slow queries from happening, you are not allowed to execute
+  * queries directly. Instead, you must create a design document containing that query. CouchDB will
+  * create and maintain an index for it.
+  *
+  * You can do pretty much anything you want inside these (much like SQL, but with some of the
+  * antipatterns further enshrined). While people joke about websites run directly from SQL
+  * databases and stored procedures, that is much easier to achieve using CouchDB design documents.
+  */
 class DesignDoc {
 	private CouchDatabase _db;
 	private string _name;
 	private URL _url;
 
 	/**
-		* Create a design document.
-		*
-		* Params:
-		*   db   = The database this design document applies to.
-		*   name = The name of this design document. Names must be unique within a database.
-		*/
+	  * Create a design document.
+	  *
+	  * Params:
+	  *   db   = The database this design document applies to.
+	  *   name = The name of this design document. Names must be unique within a database.
+	  */
 	this(CouchDatabase db, string name) {
 		_db = db;
 		_name = name;
@@ -365,8 +446,14 @@ class DesignDoc {
 		return view;
 	}
 
+	/** Save this DesignDoc to the database.
+	  *
+	  * You *must* call this before using the related views.
+	  */
 	void save() {
+		import std.stdio;
 		auto js = this.toJSON;
+		writeln("saving to ", url, " design doc: ", js);
 		curl.put(url, js);
 	}
 
@@ -382,52 +469,52 @@ class DesignDoc {
 	}
 
 	/**
-		* A collection of filter functions this view uses.
-		*
-		* Filters, obviously, filter out documents to determine which ones this view can show.
-		* For instance, if you have a site for recipes and want to quickly show which recipes call for
-		* quail's eggs, you can write a filter that checks a recipe document for its ingredients.
-		*
-		* See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
-		*/
+	  * A collection of filter functions this view uses.
+	  *
+	  * Filters, obviously, filter out documents to determine which ones this view can show.
+	  * For instance, if you have a site for recipes and want to quickly show which recipes call for
+	  * quail's eggs, you can write a filter that checks a recipe document for its ingredients.
+	  *
+	  * See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
+	  */
 	string[string] filters;
 
 	/**
-		* A collection of show functions this view uses.
-		*
-		* A show function is a mapping from a database document to a document that the view will return.
-		* For instance, if have a blog and want to show a blurb about post N-1 from post N, you can use
-		* a show to grab just that blurb.
-		*
-		* A show function operates on just one document.
-		*
-		* See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
-		*/
+	  * A collection of show functions this view uses.
+	  *
+	  * A show function is a mapping from a database document to a document that the view will return.
+	  * For instance, if have a blog and want to show a blurb about post N-1 from post N, you can use
+	  * a show to grab just that blurb.
+	  *
+	  * A show function operates on just one document.
+	  *
+	  * See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
+	  */
 	string[string] shows;
 
 	/**
-		* A collection of list functions this view uses.
-		*
-		* A list function is a mapping from a database document to a document that the view will return.
-		* For instance, if you have a site for recipes and want to quickly show a brief description of
-		* each recipe along with a link from the search page, your show function can yield just the
-		* first few words of the description and the URL, meaning the database doesn't have to send as
-		* much to you.
-		*
-		* List is much like show, but it queries across documents that the view will yield.
-		*
-		* See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
-		*/
+	  * A collection of list functions this view uses.
+	  *
+	  * A list function is a mapping from a database document to a document that the view will return.
+	  * For instance, if you have a site for recipes and want to quickly show a brief description of
+	  * each recipe along with a link from the search page, your show function can yield just the
+	  * first few words of the description and the URL, meaning the database doesn't have to send as
+	  * much to you.
+	  *
+	  * List is much like show, but it queries across documents that the view will yield.
+	  *
+	  * See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
+	  */
 	string[string] lists;
 
 	/**
-		* A collection of update functions this view uses.
-		*
-		* An update function mutates the database -- either by updating existing documents, by creating
-		* new ones, or deleting existing ones.
-		*
-		* See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
-		*/
+	  * A collection of update functions this view uses.
+	  *
+	  * An update function mutates the database -- either by updating existing documents, by creating
+	  * new ones, or deleting existing ones.
+	  *
+	  * See http://docs.couchdb.org/en/1.6.1/couchapp/ddocs.html for details.
+	  */
 	string[string] updates;
 
 	View[string] views;
@@ -435,13 +522,13 @@ class DesignDoc {
 
 
 /**
-	* A CouchDB database.
-	*
-	* This represents a single named database within a CouchDB instance.
-	*/
+  * A CouchDB database.
+  *
+  * This represents a single named database within a CouchDB instance.
+  */
 class CouchDatabase {
 	private string _name;
-	private CouchClient _client;
+	package CouchClient client;
 	private URL _url;
 
 	private URL _documentPath(string uuid) {
@@ -449,35 +536,35 @@ class CouchDatabase {
 	}
 
 	package this(CouchClient client, string name) {
-		_client = client;
+		this.client = client;
 		_name = name;
-		_url = _client.url ~ _name;
+		_url = client.url ~ _name;
 	}
 
 	package URL url() { return _url; }
 
 	/**
-		* Insert the given JSON document into the database.
-		*
-		* Params:
-		*   uuid  = the ID of the object to insert.
-		*   value = the value to insert into the database.
-		* Returns:
-		*   The input JSON value with added _rev and _id fields, representing the document's new
-		*   revision number and ID respectively.
-		*/
+	  * Insert the given JSON document into the database.
+	  *
+	  * Params:
+	  *   uuid  = the ID of the object to insert.
+	  *   value = the value to insert into the database.
+	  * Returns:
+	  *   The input JSON value with added _rev and _id fields, representing the document's new
+	  *   revision number and ID respectively.
+	  */
 	DocumentResult create(UUID uuid, ref JSONValue value) {
 		return create(uuid.toString, value);
 	}
 
 	/**
-		* Insert the given JSON document into the database.
-		*
-		* Params:
-		*   uuid  = the ID of the object to insert.
-		*   value = the value to insert into the database.
-		* Returns:
-		*/
+	  * Insert the given JSON document into the database.
+	  *
+	  * Params:
+	  *   uuid  = the ID of the object to insert.
+	  *   value = the value to insert into the database.
+	  * Returns:
+	  */
 	DocumentResult create(string uuid, ref JSONValue value) {
 		auto response = cast(string) curl.put(_documentPath(uuid), value.toString);
 		auto resp = parseJSON(response);
@@ -487,50 +574,50 @@ class CouchDatabase {
 	}
 
 	/**
-		* Insert the given JSON document into the database, creating a new ID for it.
-		*
-		* Params:
-		*   value = the value to insert into the database.
-		* Returns:
-		*   The input JSON value with added _rev and _id fields, representing the document's new
-		*   revision number and ID respectively.
-		*/
+	  * Insert the given JSON document into the database, creating a new ID for it.
+	  *
+	  * Params:
+	  *   value = the value to insert into the database.
+	  * Returns:
+	  *   The input JSON value with added _rev and _id fields, representing the document's new
+	  *   revision number and ID respectively.
+	  */
 	DocumentResult create(ref JSONValue value) {
 		return create(randomUUID, value);
 	}
 
 	/**
-		* Update the given JSON document in the database.
-		*
-		* Params:
-		*   value = the value to insert into the database. It must have a valid _id field.
-		* Returns:
-		*   The input JSON value with added _rev and _id fields, representing the document's new
-		*   revision number and ID respectively.
-		*/
+	  * Update the given JSON document in the database.
+	  *
+	  * Params:
+	  *   value = the value to insert into the database. It must have a valid _id field.
+	  * Returns:
+	  *   The input JSON value with added _rev and _id fields, representing the document's new
+	  *   revision number and ID respectively.
+	  */
 	DocumentResult update(JSONValue value) {
 		return create(value["_id"].str, value);
 	}
 
 	/**
-		* Remove the given document from the database.
-		*
-		* This marks the document as deleted but does not expunge it from the database. It instead adds
-		* a revision that marks the document as deleted. With this method, it also removes all fields
-		* besides the document ID and revision and deleted flag.
-		*
-		* You can also delete a document (without removing its other fields) by adding an entry
-		* "_deleted": true to the document root.
-		*
-		* If you need the document entirely expunged from the database, use the `purge` option.
-		*
-		* Params:
-		*   value = The document to delete.
-		* Returns:
-		*   A json document of the form
-		*   {"id": "document id", "rev": "document revision", "ok": true|false}
-		*   indicating the success or failure.
-		*/
+	  * Remove the given document from the database.
+	  *
+	  * This marks the document as deleted but does not expunge it from the database. It instead adds
+	  * a revision that marks the document as deleted. With this method, it also removes all fields
+	  * besides the document ID and revision and deleted flag.
+	  *
+	  * You can also delete a document (without removing its other fields) by adding an entry
+	  * "_deleted": true to the document root.
+	  *
+	  * If you need the document entirely expunged from the database, use the `purge` option.
+	  *
+	  * Params:
+	  *   value = The document to delete.
+	  * Returns:
+	  *   A json document of the form
+	  *   {"id": "document id", "rev": "document revision", "ok": true|false}
+	  *   indicating the success or failure.
+	  */
 	DocumentResult remove(JSONValue value) {
 		auto uuid = value["_id"].str;
 		auto revision = value["_rev"].str;
@@ -546,24 +633,24 @@ class CouchDatabase {
 	}
 
 	/**
-		* Get the document stored in the database with the given ID.
-		*/
+	  * Get the document stored in the database with the given ID.
+	  */
 	JSONValue get(string uuid) {
 		return parseJSON(curl.get(_documentPath(uuid)));
 	}
 
 	/**
-		* Create this database.
-		*/
+	  * Create this database.
+	  */
 	JSONValue createDatabase() {
-		return parseJSON(curl.put(_client.url ~ _name, []));
+		return parseJSON(curl.put(client.url ~ _name, []));
 	}
 
 	/**
-		* Delete this database.
-		*/
+	  * Delete this database.
+	  */
 	JSONValue deleteDatabase() {
-		auto http = curl.HTTP(_client.url ~ _name);
+		auto http = curl.HTTP(client.url ~ _name);
 		http.method = curl.HTTP.Method.del;
 		ubyte[] data;
 		http.onReceive = (chunk) {
@@ -576,12 +663,13 @@ class CouchDatabase {
 }
 
 /**
-	* CouchClient is a logical CouchDB connection.
-	*
-	* To start with, you create a CouchClient. Then you use that to access databases.
-	*/
+  * CouchClient is a logical CouchDB connection.
+  *
+  * To start with, you create a CouchClient. Then you use that to access databases.
+  */
 class CouchClient {
 	private URL _url;
+	private Transport _transport;
 
 	///
 	this(string url) {
@@ -595,6 +683,32 @@ class CouchClient {
 
 	package @property URL url() nothrow pure {
 		return _url;
+	}
+
+	/**
+		* Select the transport that will be used to make requests to the Couch database.
+		*
+		* The default is to use std.net.curl. You can substitute another to use, for instance, vibe.d as
+		* the HTTP transport system.
+		*/
+	@property Transport transport(Transport value)
+	in {
+		assert (value !is null);
+	}
+	body {
+		_transport = value;
+		return _transport;
+	}
+
+	package @property Transport transport()
+	out (result) {
+		assert (result !is null);
+	}
+	body {
+		if (_transport is null) {
+			_transport = new CurlTransport;
+		}
+		return _transport;
 	}
 
 	/// Ensure that there exists a database with the given name.
@@ -614,11 +728,11 @@ class CouchClient {
 	}
 
 	/**
-		* Get the named database.
-		*
-		* This doesn't check for the existence of the database.
-		*/
-	CouchDatabase opIndex(string name)
+	  * Get the named database.
+	  *
+	  * This doesn't check for the existence of the database.
+	  */
+	CouchDatabase database(string name)
 	in {
 		assert(name, "name is required");
 	}

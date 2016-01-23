@@ -2,38 +2,43 @@ module couch;
 
 import url;
 
-import curl = std.net.curl;
 import std.algorithm;
 import std.conv : to;
 import std.json;
 import std.string : format;
 import std.uuid;
 
+/**
+	* A Transport is an HTTP client used for communication with CouchDB.
+	*/
 interface Transport {
+	/// Peform an HTTP GET request.
 	string get(URL url);
+	/// Peform an HTTP PUT request.
 	string put(URL url, string contents);
-	string delete_(URL url, string contents);
+	/// Peform an HTTP DELETE request.
+	string delete_(URL url, string contents = "");
 }
 
-// A simple wrapper around curl. I want to switch this into a transport instead, one that you can
-// swap out implementations for.
 class CurlTransport : Transport {
-	import std.array;
+	import curl = std.net.curl;
 
 	string get(URL url) {
 		return perform(url, "", curl.HTTP.Method.get);
 	}
 
 	string put(URL url, string contents) {
-		return perform(url, "", curl.HTTP.Method.get);
+		return perform(url, contents, curl.HTTP.Method.put);
 	}
 
-	string delete_(URL url, string contents) {
-		return perform(url, "", curl.HTTP.Method.get);
+	string delete_(URL url, string contents = "") {
+		return perform(url, contents, curl.HTTP.Method.del);
 	}
 
 	private string perform(URL url, string contents, curl.HTTP.Method method) {
+		import std.array;
 		auto c = curl.HTTP(url.toString);
+		c.method = method;
 		Appender!string output;
 		size_t sent = 0;
 		c.onSend = (buf) {
@@ -44,7 +49,7 @@ class CurlTransport : Transport {
 			if (len > buf.length) {
 				len = buf.length;
 			}
-			buf[] = cast(void[])contents[sent..sent + len];
+			buf[0..len] = cast(void[])contents[sent..sent + len];
 			sent += len;
 			return len;
 		};
@@ -82,7 +87,7 @@ enum CouchErrorCode {
 
 
 /// An exception thrown when the CouchDB client is misused.
-class CouchError : Exception
+class CouchError : Error
 {
 	public:
 		this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
@@ -113,10 +118,13 @@ class CouchException : Exception
 
 }
 
-
+/// A struct representing the result of manipulating a document.
 struct DocumentResult {
+	/// The document ID.
 	string id;
+	/// The document revision.
 	string revision;
+	/// Whether the operation succeeded.
 	bool ok;
 	
 	this(JSONValue value) {
@@ -454,7 +462,7 @@ class DesignDoc {
 		import std.stdio;
 		auto js = this.toJSON;
 		writeln("saving to ", url, " design doc: ", js);
-		curl.put(url, js);
+		_db.client.transport.put(url, js);
 	}
 
 	string toJSON() {
@@ -566,7 +574,7 @@ class CouchDatabase {
 	  * Returns:
 	  */
 	DocumentResult create(string uuid, ref JSONValue value) {
-		auto response = cast(string) curl.put(_documentPath(uuid), value.toString);
+		auto response = cast(string) client.transport.put(_documentPath(uuid), value.toString);
 		auto resp = parseJSON(response);
 		value["_rev"] = resp["rev"];
 		value["_id"] = resp["id"];
@@ -621,44 +629,30 @@ class CouchDatabase {
 	DocumentResult remove(JSONValue value) {
 		auto uuid = value["_id"].str;
 		auto revision = value["_rev"].str;
-		auto http = curl.HTTP(_documentPath(uuid) ~ "?rev=" ~ revision);
-		http.method = curl.HTTP.Method.del;
-		ubyte[] data;
-		http.onReceive = (chunk) {
-			data ~= chunk;
-			return chunk.length;
-		};
-		http.perform;
-		return DocumentResult(parseJSON(cast(string)data));
+		auto url = _documentPath(uuid);
+		url.query["rev"] = revision;
+		return DocumentResult(parseJSON(client.transport.delete_(url)));
 	}
 
 	/**
 	  * Get the document stored in the database with the given ID.
 	  */
 	JSONValue get(string uuid) {
-		return parseJSON(curl.get(_documentPath(uuid)));
+		return parseJSON(client.transport.get(_documentPath(uuid)));
 	}
 
 	/**
 	  * Create this database.
 	  */
 	JSONValue createDatabase() {
-		return parseJSON(curl.put(client.url ~ _name, []));
+		return parseJSON(client.transport.put(client.url ~ _name, ""));
 	}
 
 	/**
 	  * Delete this database.
 	  */
 	JSONValue deleteDatabase() {
-		auto http = curl.HTTP(client.url ~ _name);
-		http.method = curl.HTTP.Method.del;
-		ubyte[] data;
-		http.onReceive = (chunk) {
-			data ~= chunk;
-			return chunk.length;
-		};
-		http.perform;
-		return parseJSON(cast(string)data);
+		return parseJSON(client.transport.delete_(client.url ~ _name));
 	}
 }
 
@@ -713,12 +707,12 @@ class CouchClient {
 
 	/// Ensure that there exists a database with the given name.
 	void ensure(string name) {
-		curl.put(_url ~ name, []);
+		transport.put(_url ~ name, "");
 	}
 
 	/// List databases in this CouchDB instance.
 	string[] databases() {
-		auto s = curl.get(_url ~ "/_all_dbs");
+		auto s = transport.get(_url ~ "/_all_dbs");
 		auto j = parseJSON(s).array;
 		auto dbNames = new string[j.length];
 		foreach (i, name; j) {

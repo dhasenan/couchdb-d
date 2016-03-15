@@ -97,22 +97,22 @@ class CouchError : Error
 
 
 /// An exception thrown when we have troubles with CouchDB.
-class CouchException : Exception
-{
+class CouchException : Exception {
 	private:
 		CouchErrorCode _error;
 
 	public:
-		this(string msg, CouchErrorCode error = CouchErrorCode.Unknown, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(string msg, CouchErrorCode error = CouchErrorCode.Unknown,
+				string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
 			super(msg, file, line, next);
 			_error = error;
 		}
 
-		@property CouchErrorCode error() pure nothrow {
+		@property CouchErrorCode error() pure nothrow const {
 			return _error;
 		}
 
-		override string toString() {
+		override string toString() const {
 			return format("%s: %s", this.error.to!string, this.msg);
 		}
 
@@ -274,7 +274,7 @@ struct QueryOptions {
 	  */
 	bool includeDocuments;
 
-	package void addQueryParameters(ref URL url) {
+	package void addQueryParameters(ref URL url) const {
 		if (key != "" && startKey != "") {
 			throw new CouchError("Your query options specified both 'key' and 'startKey', but these " ~
 					"options are mutually exclusive. startKey indicates that the query will take keys " ~
@@ -339,7 +339,7 @@ struct CouchImplicitlyPaginatedRange {
 	}
 
 	///
-	JSONValue front() {
+	JSONValue front() const {
 		return currentPage[resultInCurrentPage];
 	}
 
@@ -347,7 +347,7 @@ struct CouchImplicitlyPaginatedRange {
 	JSONValue popFront() {
 		// We loaded K + 1 results for the page when we actually want K results per page. The +1 is just
 		// for fast pagination. Except on the last page, we need to include it.
-		if (!inLastPage && resultInCurrentPage >= currentPage.length - 1) {
+		if (!inLastPage && resultInCurrentPage + 1 >= currentPage.length) {
 			loadNextPage();
 		}
 		resultsReturned++;
@@ -357,7 +357,7 @@ struct CouchImplicitlyPaginatedRange {
 	}
 
 	///
-	bool empty() {
+	bool empty() const {
 		return inLastPage && (resultInCurrentPage >= currentPage.length || resultsReturned >= maxResults);
 	}
 
@@ -371,7 +371,7 @@ struct CouchImplicitlyPaginatedRange {
 	  * This may be larger than the limit you provided. In that case, this range will only be over the
 	  * amount you specified, but you could provide a larger limit in order to fetch more.
 	  */
-	@property long numResults() {
+	@property long numResults() const {
 		return totalResults;
 	}
 
@@ -383,8 +383,7 @@ struct CouchImplicitlyPaginatedRange {
 		if (nextResultDocID.length > 0) {
 			url.query["startkey_docid"] = nextResultDocID;
 		}
-		auto docText = transport.get(url);
-		auto doc = docText.parseJSON;
+		auto doc = transport.get(url).parseJSON;
 		// We update this every time because it might have changed.
 		totalResults = doc["total_rows"].integer;
 		currentPage = doc["rows"].array;
@@ -628,9 +627,8 @@ class CouchDatabase {
 	  */
 	DocumentResult remove(JSONValue value) {
 		auto uuid = value["_id"].str;
-		auto revision = value["_rev"].str;
 		auto url = _documentPath(uuid);
-		url.query["rev"] = revision;
+		url.query["rev"] = value["_rev"].str;
 		return DocumentResult(parseJSON(client.transport.delete_(url)));
 	}
 
@@ -639,6 +637,23 @@ class CouchDatabase {
 	  */
 	JSONValue get(string uuid) {
 		return parseJSON(client.transport.get(_documentPath(uuid)));
+	}
+
+	/**
+		* Get all documents in the database.
+		*
+		* Params:
+		*   options = the QueryOptions for this query.
+		* Returns:
+		*   A range over the documents in the database.
+		*/
+	CouchImplicitlyPaginatedRange allDocs(QueryOptions options = QueryOptions.init) {
+		auto u = this.url;
+		u.path ~= "_all_docs";
+		options.addQueryParameters(u);
+		auto transport = client.transport;
+		assert(transport !is null);
+		return CouchImplicitlyPaginatedRange(u, transport, options.startKey);
 	}
 
 	/**

@@ -51,10 +51,10 @@ Do make sure to savev the design doc after modifying it.
 Querying a view is straightforward:
 
 ```D
-QueryOptions o = {key: "bob.dobbs@subgenius.org", limit: 1};
+QueryOptions o = {key: "bob.dobbs@subgenius.org", limit: 1, includeDocuments: true};
 auto results = designDoc.view("byEmail").query(o);
 foreach (document; results) {
-	writeln(document["name"].str, " is a subgenius");
+	writeln(document["doc"]["name"].str, " is a subgenius");
 }
 ```
 
@@ -64,8 +64,16 @@ straightforward:
 
 ```D
 enum pageSize = 100;
-QueryOptions o = {key: "butter", resultsPerPage: pageSize + 1, limit: pageSize + 1};
-auto results = designDoc.view("byIngredient").query(o).array;
-display(results[0..$-1]);
-nextDocumentID = results[$-1]["id"];
+string nextDocumentID;
+do {
+	QueryOptions o = {key: "butter", resultsPerPage: pageSize + 1, limit: pageSize + 1};
+	auto results = designDoc.view("byIngredient").query(o).array;
+	display(results[0..$-1]);
+	if (results.length > pageSize) {
+		nextDocumentID = results[$-1]["id"];
+	} else {
+		nextDocumentID = null;
+	}
+} while (nextDocumentID != null);
 ```
+

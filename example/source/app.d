@@ -22,6 +22,7 @@ void main() {
 	} catch {}
 	db.createDatabase;
 	scope (exit) db.deleteDatabase;
+
 	JSONValue doc = ["hello": "world", "otherData": "somethingElse"];
 	auto resp = db.create(doc);
 	if (!resp.ok) {

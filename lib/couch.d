@@ -282,19 +282,19 @@ struct QueryOptions {
 					"will take keys only of the given value. You probably want to specify only the 'key' " ~
 					"field.");
 		}
-		url.query["limit"] = min(resultsPerPage + 1, limit).to!string;
-		url.query["descending"] = (order == Order.Descending).to!string;
+		url.queryParams.overwrite("limit", min(resultsPerPage + 1, limit).to!string);
+		url.queryParams.overwrite("descending", (order == Order.Descending).to!string);
 		if (key != "") {
-			url.query["key"] = key;
+			url.queryParams.overwrite("key", key);
 		}
 		if (startKey != "") {
-			url.query["startKey"] = startKey;
+			url.queryParams.overwrite("startKey", startKey);
 		}
 		if (order != Order.Ascending) {
-			url.query["descending"] = "true";
+			url.queryParams.overwrite("descending", "true");
 		}
 		if (includeDocuments) {
-			url.query["include_docs"] = "true";
+			url.queryParams.overwrite("include_docs", "true");
 		}
 	}
 }
@@ -334,7 +334,6 @@ struct CouchImplicitlyPaginatedRange {
 	///
 	typeof(this) save() {
 		auto other = this;
-		other.url.query = url.query.dup;
 		return other;
 	}
 
@@ -378,10 +377,10 @@ struct CouchImplicitlyPaginatedRange {
 	private void loadNextPage() {
 		resultInCurrentPage = 0;
 		if (nextResultKey.length > 0) {
-			url.query["startkey"] = nextResultKey;
+            url.queryParams.overwrite("startkey", nextResultKey);
 		}
 		if (nextResultDocID.length > 0) {
-			url.query["startkey_docid"] = nextResultDocID;
+            url.queryParams.overwrite("startkey_docid", nextResultDocID);
 		}
 		auto doc = transport.get(url).parseJSON;
 		// We update this every time because it might have changed.
@@ -629,6 +628,7 @@ class CouchDatabase {
 		auto uuid = value["_id"].str;
 		auto url = _documentPath(uuid);
 		url.query["rev"] = value["_rev"].str;
+		url.queryParams.overwrite("rev", value["_rev"].str);
 		return DocumentResult(parseJSON(client.transport.delete_(url)));
 	}
 

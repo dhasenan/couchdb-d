@@ -4,13 +4,13 @@ import url;
 
 import std.algorithm;
 import std.conv : to;
-import std.json;
 import std.string : format;
 import std.uuid;
+import stdx.data.json;
 
 /**
-	* A Transport is an HTTP client used for communication with CouchDB.
-	*/
+ * A Transport is an HTTP client used for communication with CouchDB.
+ */
 interface Transport {
 	/// Peform an HTTP GET request.
 	string get(URL url);
@@ -128,9 +128,9 @@ struct DocumentResult {
 	bool ok;
 	
 	this(JSONValue value) {
-		id = value["id"].str;
-		revision = value["rev"].str;
-		ok = value["ok"].type == JSON_TYPE.TRUE;
+		id = value["id"].get!string;
+		revision = value["rev"].get!string;
+		ok = value["ok"] == true;
 	}
 }
 
@@ -170,7 +170,7 @@ enum Order {
   * ---
   * auto view = connection.db("recipes").designDoc("recipes").view("ingredients");
   * foreach (recipe; view.query({key: "hartshorn"})) {
-  *   writeln(recipe["name"].str);
+  *   writeln(recipe["name"].get!string);
   * }
   * ---
   *
@@ -228,8 +228,8 @@ class View {
 		return CouchImplicitlyPaginatedRange(url, transport, options.startKey);
 	}
 
-	JSONValue toJSON() {
-		JSONValue v;
+	JSONValue asJSON() {
+		JSONValue v = emptyObject;
 		if (map) {
 			v["map"] = map;
 		}
@@ -384,16 +384,16 @@ struct CouchImplicitlyPaginatedRange {
 		}
 		auto doc = transport.get(url).parseJSON;
 		// We update this every time because it might have changed.
-		totalResults = doc["total_rows"].integer;
-		currentPage = doc["rows"].array;
-		inLastPage = doc["offset"].integer + currentPage.length >= totalResults;
+		totalResults = doc["total_rows"].get!long;
+		currentPage = doc["rows"].get!(JSONValue[]);
+		inLastPage = doc["offset"].get!long + currentPage.length >= totalResults;
 		if (currentPage.length == 0) {
 			nextResultDocID = null;
 			nextResultKey = null;
 		} else {
 			auto last = currentPage[$-1];
-			nextResultDocID = last["id"].str;
-			nextResultKey = last["key"].str;
+			nextResultDocID = last["id"].get!string;
+			nextResultKey = last["key"].get!string;
 		}
 	}
 }
@@ -458,20 +458,20 @@ class DesignDoc {
 	  */
 	void save() {
 		import std.stdio;
-		auto js = this.toJSON;
+		auto js = this.asJSON;
 		writeln("saving to ", url, " design doc: ", js);
 		_db.client.transport.put(url, js);
 	}
 
-	string toJSON() {
-		JSONValue value;
-		value["language"] = "javascript";
-		JSONValue views;
+	string asJSON() {
+		JSONValue value = ["language": JSONValue("javascript")];
+		JSONValue viewJS = emptyObject;
 		foreach (k, v; this.views) {
-			views[k] = v.toJSON;
+            auto js = v.asJSON;
+			viewJS[k] = js;
 		}
-		value["views"] = views;
-		return value.toString;
+		value["views"] = viewJS;
+		return value.toJSON;
 	}
 
 	/**
@@ -572,7 +572,7 @@ class CouchDatabase {
 	  * Returns:
 	  */
 	DocumentResult create(string uuid, ref JSONValue value) {
-		auto response = cast(string) client.transport.put(_documentPath(uuid), value.toString);
+		auto response = cast(string) client.transport.put(_documentPath(uuid), value.toJSON);
 		auto resp = parseJSON(response);
 		value["_rev"] = resp["rev"];
 		value["_id"] = resp["id"];
@@ -602,7 +602,7 @@ class CouchDatabase {
 	  *   revision number and ID respectively.
 	  */
 	DocumentResult update(JSONValue value) {
-		return create(value["_id"].str, value);
+		return create(value["_id"].get!string, value);
 	}
 
 	/**
@@ -625,10 +625,10 @@ class CouchDatabase {
 	  *   indicating the success or failure.
 	  */
 	DocumentResult remove(JSONValue value) {
-		auto uuid = value["_id"].str;
+		auto uuid = value["_id"].get!string;
 		auto url = _documentPath(uuid);
-		url.query["rev"] = value["_rev"].str;
-		url.queryParams.overwrite("rev", value["_rev"].str);
+		url.query["rev"] = value["_rev"].get!string;
+		url.queryParams.overwrite("rev", value["_rev"].get!string);
 		return DocumentResult(parseJSON(client.transport.delete_(url)));
 	}
 
@@ -728,10 +728,10 @@ class CouchClient {
 	/// List databases in this CouchDB instance.
 	string[] databases() {
 		auto s = transport.get(_url ~ "/_all_dbs");
-		auto j = parseJSON(s).array;
+		auto j = parseJSON(s).get!(JSONValue[]);
 		auto dbNames = new string[j.length];
 		foreach (i, name; j) {
-			dbNames[i] = name.str;
+			dbNames[i] = name.get!string;
 		}
 		return dbNames;
 	}
@@ -748,4 +748,16 @@ class CouchClient {
 	body {
 		return new CouchDatabase(this, name);
 	}
+}
+
+// This lets us parse JSON in one line with an rvalue.
+private JSONValue parseJSON(string s)
+{
+    return parseJSONValue(s);
+}
+
+private JSONValue emptyObject()
+{
+    JSONValue value = (JSONValue[string]).init;
+    return value;
 }

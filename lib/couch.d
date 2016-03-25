@@ -8,9 +8,13 @@ import std.json;
 import std.string : format;
 import std.uuid;
 
+// std.json is unsafe until about 2.072.0. Until then, @trusted everything!
+//@safe:
+@trusted:
+
 /**
-	* A Transport is an HTTP client used for communication with CouchDB.
-	*/
+ * A Transport is an HTTP client used for communication with CouchDB.
+ */
 interface Transport {
 	/// Peform an HTTP GET request.
 	string get(URL url);
@@ -35,7 +39,7 @@ class CurlTransport : Transport {
 		return perform(url, contents, curl.HTTP.Method.del);
 	}
 
-	private string perform(URL url, string contents, curl.HTTP.Method method) {
+	private string perform(URL url, string contents, curl.HTTP.Method method) @trusted {
 		import std.array;
 		auto c = curl.HTTP(url.toString);
 		c.method = method;

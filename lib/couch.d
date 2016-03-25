@@ -8,8 +8,12 @@ import std.string : format;
 import std.uuid;
 import stdx.data.json;
 
+@safe:
+
 /**
  * A Transport is an HTTP client used for communication with CouchDB.
+ *
+ * Transport is provided to allow vibe.d compatibility.
  */
 interface Transport
 {
@@ -21,6 +25,13 @@ interface Transport
     string delete_(URL url, string contents = "");
 }
 
+/**
+ * The default transport is CurlTransport.
+ * This uses std.net.curl to make HTTP requests to couchdb.
+ *
+ * Note: std.net.curl is not @safe, but this provides a @trusted helper method to use it as if it
+ * were safe. This comes with a minor risk.
+ */
 class CurlTransport : Transport
 {
     import curl = std.net.curl;
@@ -40,7 +51,7 @@ class CurlTransport : Transport
         return perform(url, contents, curl.HTTP.Method.del);
     }
 
-    private string perform(URL url, string contents, curl.HTTP.Method method)
+    private string perform(URL url, string contents, curl.HTTP.Method method) @trusted
     {
         import std.array;
 
@@ -75,7 +86,7 @@ class CurlTransport : Transport
                 format("Request failed. Error code: %d. Reason: %s. Response:\n%s",
                 c.statusLine.code, c.statusLine.reason, output.data));
         }
-        return cast(string) output.data;
+        return output.data;
     }
 }
 
@@ -296,7 +307,7 @@ struct QueryOptions
         if (key != "" && startKey != "")
         {
             throw new CouchError(
-                "Your query options specified both 'key' and 'startKey', but these " ~ "options are mutually exclusive. startKey indicates that the query will take keys " ~ "starting at the given value and continuing onward, while key indicates that the query " ~ "will take keys only of the given value. You probably want to specify only the 'key' " ~ "field.");
+                "Your query options specified both 'key' and 'startKey', but these options are mutually exclusive. startKey indicates that the query will take keys starting at the given value and continuing onward, while key indicates that the query will take keys only of the given value. You probably want to specify only the 'key' field.");
         }
         url.queryParams.overwrite("limit", min(resultsPerPage + 1, limit).to!string);
         url.queryParams.overwrite("descending", (order == Order.Descending).to!string);
@@ -404,6 +415,8 @@ struct CouchImplicitlyPaginatedRange
     {
         return totalResults;
     }
+    ///
+    alias length = numResults;
 
     private void loadNextPage()
     {
